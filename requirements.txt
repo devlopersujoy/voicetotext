@@ -1,0 +1,4 @@
+Flask>=3.1,<4
+gunicorn>=23,<30
+yt-dlp[default]>=2025.11.12
+urllib3>=2.5,<3

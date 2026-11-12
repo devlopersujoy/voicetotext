@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: voice-to-text
+    runtime: docker
+    plan: free
+    healthCheckPath: /health

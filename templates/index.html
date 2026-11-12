@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Voice to text</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f5f4ed;color:#19372e;font:16px/1.5 "DM Sans",system-ui,sans-serif}main{max-width:680px;margin:7vh auto;padding:20px}h1{font:clamp(42px,8vw,72px)/1.02 Georgia,serif;letter-spacing:-.05em;margin:20px 0}form,article{background:#fffefa;border:1px solid #c9d5ca;border-radius:18px;padding:clamp(18px,4vw,32px);margin:20px 0}label{display:block;font-weight:650;margin:16px 0 6px}input,select,textarea{width:100%;font:inherit;padding:12px;border:1px solid #a6b8ac;border-radius:8px;background:white;color:inherit}button,a{display:inline-block;font:inherit;font-weight:650;background:#174b39;color:white;border:0;border-radius:8px;padding:11px 18px;cursor:pointer;text-decoration:none}button:disabled{opacity:.5}small{color:#536759}textarea{min-height:190px}#go{margin-top:22px}p{margin:8px 0}nav{display:flex;gap:6px;flex-wrap:wrap}nav button{background:#eef2eb;color:#254d3e}nav button[aria-pressed=true]{background:#174b39;color:white}
+</style>
+<main><h1>Voice to text</h1><p>Turn speech into a transcript in its original language.</p>
+<form id="form"><nav aria-label="Input source"><button type="button" id="upload" aria-pressed="true">Audio or video</button><button type="button" id="youtube" aria-pressed="false">Media link</button><button type="button" id="mic" aria-pressed="false">Microphone</button></nav>
+<section id="filebox"><label for="file">Choose a recording</label><input id="file" name="file" type="file" accept="audio/*,video/*,.ogg,.opus,.amr,.mkv" required></section>
+<section id="urlbox" hidden><label for="url">YouTube, voice or video URL</label><input id="url" type="url" name="url" placeholder="https://…" disabled></section>
+<section hidden id="micbox"><label>Voice recording</label><button type="button" id="record">Start recording</button><p id="micstatus" role="status"></p></section>
+<small>Up to 10 minutes · 48 MiB per file</small>
+<label for="language">Spoken language</label><select name="language" id="language"><option value="auto">Detect automatically</option>{% for code,name in languages|dictsort(by="value") %}<option value="{{ code }}">{{ name }}{% if code == "bn" %} · বাংলা{% endif %}</option>{% endfor %}</select>
+<button id="go">Transcribe</button></form><p role="status" id="status"></p>
+<article id="result" hidden><label for="out">Transcript</label><textarea id="out" readonly dir="auto"></textarea><a id="download" download="transcript.txt">Download TXT</a></article></main>
+<script>
+const el=id=>document.getElementById(id);
+let recorder, recording, timer, source='upload';
+function mode(next){
+  if(recorder?.state==='recording') recorder.stop();
+  source=next;
+  for(const [id,box] of [['upload','filebox'],['youtube','urlbox'],['mic','micbox']]){
+    el(box).hidden=id!==next;
+    el(id).setAttribute('aria-pressed',String(id===next));
+  }
+  el('file').disabled=next!=='upload';
+  el('url').disabled=next!=='youtube';
+  el('url').required=next==='youtube';
+}
+for(const id of ['upload','youtube','mic']) el(id).onclick=()=>mode(id);
+el('record').onclick=async()=>{
+  if(recorder?.state==='recording'){recorder.stop();return;}
+  let stream;
+  el('record').disabled=true;
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    if(source!=='mic'){stream.getTracks().forEach(t=>t.stop());return;}
+    recorder=new MediaRecorder(stream);
+    const chunks=[];
+    recording=null;
+    recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
+    recorder.onstop=()=>{
+      clearTimeout(timer);
+      stream.getTracks().forEach(t=>t.stop());
+      recording=new Blob(chunks,{type:recorder.mimeType});
+      el('record').textContent='Record again';
+      el('micstatus').textContent='Recording ready to transcribe.';
+    };
+    recorder.start();
+    el('record').textContent='Stop recording';
+    el('micstatus').textContent='Recording…';
+    timer=setTimeout(()=>{if(recorder.state==='recording')recorder.stop();},599000);
+  }catch(error){
+    stream?.getTracks().forEach(t=>t.stop());
+    el('micstatus').textContent='Microphone unavailable. Allow microphone access or upload a recording.';
+  }finally{el('record').disabled=false;}
+};
+el('form').onsubmit=async event=>{
+  event.preventDefault();
+  el('go').disabled=true;
+  el('result').hidden=true;
+  el('status').textContent='Sending your recording…';
+  try{
+    const body=new FormData(el('form'));
+    if(source==='mic'){
+      if(!recording || recorder?.state==='recording') throw Error('Record and stop your clip first.');
+      body.append('file',recording,'microphone');
+    }
+    const response=await fetch('/jobs',{method:'POST',body});
+    const job=await response.json();
+    if(!response.ok) throw Error(job.error || 'Upload failed.');
+    for(;;){
+      const reply=await fetch('/jobs/'+encodeURIComponent(job.id));
+      const data=await reply.json();
+      if(data.error || !reply.ok) throw Error(data.error || 'Could not read job status.');
+      el('status').textContent=data.state;
+      if(data.text){
+        el('out').value=data.text;
+        if(el('download').href) URL.revokeObjectURL(el('download').href);
+        el('download').href=URL.createObjectURL(new Blob([data.text],{type:'text/plain;charset=utf-8'}));
+        el('result').hidden=false;
+        break;
+      }
+      await new Promise(resolve=>setTimeout(resolve,2000));
+    }
+  }catch(error){el('status').textContent=error.message;}
+  finally{el('go').disabled=false;}
+};
+</script></html>
